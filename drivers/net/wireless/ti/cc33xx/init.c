@@ -267,6 +267,7 @@ static bool find_calibration_entry(u8 *id,
 	int compare_result = 0;
 	bool mac_match = false;
 	bool valid_data = false;
+	goto skip; 
 
 	while (*data_ptr < stop_address)
 	{
@@ -302,7 +303,7 @@ static bool find_calibration_entry(u8 *id,
 				+ sizeof(struct calibration_header)
 				+ calibration_header_fw->length);
 	}
-
+skip:
 	if (false == mac_match) {
 		if (NULL != default_calibration) {
 			cc33xx_warning("No calibration for device address, "
