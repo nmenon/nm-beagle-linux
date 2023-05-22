@@ -2408,6 +2408,8 @@ enum nl80211_commands {
  *      enforced.
  * @NL80211_ATTR_TXQ_QUANTUM: TXQ scheduler quantum (bytes). Number of bytes
  *      a flow is assigned on each round of the DRR scheduler.
+ * 
+ * @NL80211_ATTR_DISABLE_HE:    Disable HE
  * @NL80211_ATTR_HE_CAPABILITY: HE Capability information element (from
  *	association request when used with NL80211_CMD_NEW_STATION). Can be set
  *	only if %NL80211_STA_FLAG_WME is set.
@@ -2966,6 +2968,7 @@ enum nl80211_attrs {
 	NL80211_ATTR_TXQ_MEMORY_LIMIT,
 	NL80211_ATTR_TXQ_QUANTUM,
 
+    NL80211_ATTR_DISABLE_HE,
 	NL80211_ATTR_HE_CAPABILITY,
 
 	NL80211_ATTR_FTM_RESPONDER,

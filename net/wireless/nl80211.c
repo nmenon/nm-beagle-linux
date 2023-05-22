@@ -686,6 +686,7 @@ static const struct nla_policy nl80211_policy[NUM_NL80211_ATTR] = {
 	[NL80211_ATTR_TXQ_LIMIT] = { .type = NLA_U32 },
 	[NL80211_ATTR_TXQ_MEMORY_LIMIT] = { .type = NLA_U32 },
 	[NL80211_ATTR_TXQ_QUANTUM] = { .type = NLA_U32 },
+	[NL80211_ATTR_DISABLE_HE] = { .type = NLA_FLAG },
 	[NL80211_ATTR_HE_CAPABILITY] =
 		NLA_POLICY_RANGE(NLA_BINARY,
 				 NL80211_HE_MIN_CAPABILITY_LEN,
@@ -9825,6 +9826,9 @@ static int nl80211_associate(struct sk_buff *skb, struct genl_info *info)
 	if (nla_get_flag(info->attrs[NL80211_ATTR_DISABLE_VHT]))
 		req.flags |= ASSOC_REQ_DISABLE_VHT;
 
+	if (nla_get_flag(info->attrs[NL80211_ATTR_DISABLE_HE]))
+		req.flags |= ASSOC_REQ_DISABLE_HE;
+
 	if (info->attrs[NL80211_ATTR_VHT_CAPABILITY_MASK])
 		memcpy(&req.vht_capa_mask,
 		       nla_data(info->attrs[NL80211_ATTR_VHT_CAPABILITY_MASK]),
@@ -10603,6 +10607,9 @@ static int nl80211_connect(struct sk_buff *skb, struct genl_info *info)
 
 	if (nla_get_flag(info->attrs[NL80211_ATTR_DISABLE_VHT]))
 		connect.flags |= ASSOC_REQ_DISABLE_VHT;
+
+	if (nla_get_flag(info->attrs[NL80211_ATTR_DISABLE_HE]))
+		connect.flags |= ASSOC_REQ_DISABLE_HE;
 
 	if (info->attrs[NL80211_ATTR_VHT_CAPABILITY_MASK])
 		memcpy(&connect.vht_capa_mask,

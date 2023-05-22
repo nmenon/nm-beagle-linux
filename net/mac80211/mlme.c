@@ -162,6 +162,7 @@ ieee80211_determine_chantype(struct ieee80211_sub_if_data *sdata,
 	chandef->chan = channel;
 	chandef->width = NL80211_CHAN_WIDTH_20_NOHT;
 	chandef->center_freq1 = channel->center_freq;
+	chandef->center_freq2 = 0;
 	chandef->freq1_offset = channel->freq_offset;
 
 	if (channel->band == NL80211_BAND_6GHZ) {
@@ -222,13 +223,20 @@ ieee80211_determine_chantype(struct ieee80211_sub_if_data *sdata,
 
 	/* check 40 MHz support, if we have it */
 	if (sta_ht_cap.cap & IEEE80211_HT_CAP_SUP_WIDTH_20_40) {
-		ieee80211_chandef_ht_oper(ht_oper, chandef);
+			ieee80211_chandef_ht_oper(ht_oper, chandef);
 	} else {
-		/* 40 MHz (and 80 MHz) must be supported for VHT */
-		ret = IEEE80211_STA_DISABLE_VHT;
-		/* also mark 40 MHz disabled */
-		ret |= IEEE80211_STA_DISABLE_40MHZ;
-		goto out;
+			/* 40 MHz (and 80 MHz) must be supported for 5GHZ VHT
+				unless peer allows operating mode notification. If so a 20MHz 
+				station can ask from peer to lower bandwidth. */
+			if (channel->band != NL80211_BAND_2GHZ){
+					ret = IEEE80211_STA_DISABLE_40MHZ;
+			}else{
+					ret = IEEE80211_STA_DISABLE_VHT;
+					/* also mark 40 MHz disabled */
+					ret |= IEEE80211_STA_DISABLE_40MHZ;
+			}
+			
+			goto out;
 	}
 
 	if (!vht_oper || !sband->vht_cap.vht_supported) {
@@ -704,6 +712,7 @@ static void ieee80211_send_assoc(struct ieee80211_sub_if_data *sdata)
 	struct sk_buff *skb;
 	struct ieee80211_mgmt *mgmt;
 	u8 *pos, qos_info, *ie_start;
+	u8 opmode_notif, rx_nss, rx_nss_type;
 	size_t offset = 0, noffset;
 	int i, count, rates_len, supp_rates_len, shift;
 	u16 capab;
@@ -765,6 +774,7 @@ static void ieee80211_send_assoc(struct ieee80211_sub_if_data *sdata)
 			2 + 2 * sband->n_channels + /* supported channels */
 			2 + sizeof(struct ieee80211_ht_cap) + /* HT */
 			2 + sizeof(struct ieee80211_vht_cap) + /* VHT */
+			2 + sizeof(u8) + /*VHT operating mode Notification elem*/
 			2 + 1 + sizeof(struct ieee80211_he_cap_elem) + /* HE */
 				sizeof(struct ieee80211_he_mcs_nss_supp) +
 				IEEE80211_HE_PPE_THRES_MAX_LEN +
@@ -1002,9 +1012,30 @@ skip_rates:
 	}
 
 	if (sband->band != NL80211_BAND_6GHZ &&
-	    !(ifmgd->flags & IEEE80211_STA_DISABLE_VHT))
+	    !(ifmgd->flags & IEEE80211_STA_DISABLE_VHT)){
 		ieee80211_add_vht_ie(sdata, skb, sband,
 				     &assoc_data->ap_vht_cap);
+		
+		//Add operation mode notification element when operating at 20 MHz bandwidth
+		if(chanctx_conf->def.width == NL80211_CHAN_WIDTH_20)
+		{
+			/*  Operating Mode Notification element */
+			rx_nss = 0;
+			rx_nss_type= 0;
+			opmode_notif |= IEEE80211_OPMODE_NOTIF_CHANWIDTH_20MHZ; 
+			rx_nss <<= IEEE80211_OPMODE_NOTIF_RX_NSS_SHIFT;
+			rx_nss_type <<= (IEEE80211_OPMODE_NOTIF_RX_NSS_SHIFT + 3);
+			opmode_notif |= rx_nss;
+			opmode_notif |= rx_nss_type;
+
+			pos = skb_put(skb, 2 + sizeof(u8));
+
+			*pos++ = WLAN_EID_OPMODE_NOTIF;
+			*pos++ = sizeof(u8);
+			*pos++ = opmode_notif;
+		}
+
+	}
 
 	/*
 	 * If AP doesn't support HT, mark HE as disabled.
@@ -4469,8 +4500,8 @@ static int ieee80211_do_assoc(struct ieee80211_sub_if_data *sdata)
 		return -ETIMEDOUT;
 	}
 
-	sdata_info(sdata, "associate with %pM (try %d/%d)\n",
-		   assoc_data->bss->bssid, assoc_data->tries,
+	sdata_info(sdata, "associate with %pM he=%d (try %d/%d)\n",
+		   assoc_data->bss->bssid,  sdata->vif.bss_conf.he_support ,assoc_data->tries,
 		   IEEE80211_ASSOC_MAX_TRIES);
 	ieee80211_send_assoc(sdata);
 
@@ -4980,6 +5011,7 @@ static int ieee80211_prep_channel(struct ieee80211_sub_if_data *sdata,
 	int ret;
 	u32 i;
 	bool have_80mhz;
+	bool operating_mode_notif_capable = false;
 
 	sband = local->hw.wiphy->bands[cbss->channel->band];
 
@@ -5061,7 +5093,8 @@ static int ieee80211_prep_channel(struct ieee80211_sub_if_data *sdata,
 			ifmgd->flags |= IEEE80211_STA_DISABLE_HE;
 	}
 
-	/* Allow VHT if at least one channel on the sband supports 80 MHz */
+	/* Allow VHT if at least one channel on the sband supports 80 MHz 
+	   or if Peer is Operating mode notification capable ( (10.41) in IEEE Std 802.11ac-2013) */
 	have_80mhz = false;
 	for (i = 0; i < sband->n_channels; i++) {
 		if (sband->channels[i].flags & (IEEE80211_CHAN_DISABLED |
@@ -5072,8 +5105,15 @@ static int ieee80211_prep_channel(struct ieee80211_sub_if_data *sdata,
 		break;
 	}
 
-	if (!have_80mhz)
+
+	const u8* extended_cap_ie = ieee80211_bss_get_ie(cbss,WLAN_EID_EXT_CAPABILITY);
+	if ( (extended_cap_ie)  && (extended_cap_ie[1] >= 8) && 
+			(extended_cap_ie[9] & WLAN_EXT_CAPA8_OPMODE_NOTIF))
+			operating_mode_notif_capable = true;
+
+	if ((!have_80mhz) && (!operating_mode_notif_capable))
 		ifmgd->flags |= IEEE80211_STA_DISABLE_VHT;
+	
 
 	if (sband->band == NL80211_BAND_S1GHZ) {
 		const u8 *s1g_oper_ie;
@@ -5730,6 +5770,9 @@ int ieee80211_mgd_assoc(struct ieee80211_sub_if_data *sdata,
 	if (req->flags & ASSOC_REQ_DISABLE_VHT)
 		ifmgd->flags |= IEEE80211_STA_DISABLE_VHT;
 
+	if (req->flags & ASSOC_REQ_DISABLE_HE)
+		ifmgd->flags |= IEEE80211_STA_DISABLE_HE;
+
 	err = ieee80211_prep_connection(sdata, req->bss, true, override);
 	if (err)
 		goto err_clear;
@@ -5875,7 +5918,6 @@ int ieee80211_mgd_deauth(struct ieee80211_sub_if_data *sdata,
 
 	return -ENOTCONN;
 }
-
 int ieee80211_mgd_disassoc(struct ieee80211_sub_if_data *sdata,
 			   struct cfg80211_disassoc_request *req)
 {
